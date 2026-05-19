@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analyzing… — RiskAI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-brand">
+    <span class="shield">🛡️</span><span>RiskAI</span>
+  </a>
+  <span class="nav-pill">ANALYZING</span>
+</nav>
+
+<div class="page">
+  <div style="max-width:680px;margin:0 auto;padding:80px 24px 40px;">
+
+    <!-- Header -->
+    <div style="text-align:center;margin-bottom:48px;" class="fade-up">
+      <div style="font-size:56px;margin-bottom:16px;" id="status-icon">🔍</div>
+      <h1 style="font-size:28px;font-weight:800;margin-bottom:8px;">Running Analysis</h1>
+      <p style="color:var(--text-secondary);font-size:14px;" id="filename-label">Preparing…</p>
+    </div>
+
+    <!-- Progress card -->
+    <div class="card p-8 fade-up delay-1" style="margin-bottom:24px;">
+
+      <!-- Main progress bar -->
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:13px;font-weight:600;" id="stage-label">Initializing…</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent-blue);" id="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- ETA -->
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:24px;">
+        <span id="eta-label">Calculating…</span>
+        <span id="elapsed-label">0s elapsed</span>
+      </div>
+
+      <!-- Stage checklist -->
+      <ul class="stage-list" id="stage-list">
+        <li class="stage-item" data-stage="read">
+          <span class="stage-dot"></span>
+          <span>Reading & parsing file</span>
+        </li>
+        <li class="stage-item" data-stage="schema">
+          <span class="stage-dot"></span>
+          <span>Auto-detecting column schema</span>
+        </li>
+        <li class="stage-item" data-stage="ml">
+          <span class="stage-dot"></span>
+          <span>ML screening (IsolationForest + XGBoost)</span>
+        </li>
+        <li class="stage-item" data-stage="llm">
+          <span class="stage-dot"></span>
+          <span>AI deep analysis on flagged accounts (Qwen2.5-7B)</span>
+        </li>
+        <li class="stage-item" data-stage="report">
+          <span class="stage-dot"></span>
+          <span>Generating fraud report</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Info pills -->
+    <div class="fade-up delay-2" style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);padding:6px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:999px;">
+        <span>⚡</span> ML screening &lt;50ms/txn
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);padding:6px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:999px;">
+        <span>🧠</span> LLM runs locally on GPU
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);padding:6px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:999px;">
+        <span>🔒</span> Data never leaves your machine
+      </div>
+    </div>
+
+    <!-- Error state (hidden) -->
+    <div id="error-panel" class="hidden" style="margin-top:24px;padding:20px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);text-align:center;">
+      <div style="font-size:36px;margin-bottom:12px;">❌</div>
+      <div style="font-weight:700;margin-bottom:8px;color:#fca5a5;">Analysis Failed</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;" id="error-msg"></div>
+      <a href="/" class="btn btn-ghost">← Try Again</a>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const jobId = params.get('job') || sessionStorage.getItem('job_id');
+  const filename = sessionStorage.getItem('filename') || 'your file';
+
+  if (!jobId) { window.location.href = '/'; }
+
+  document.getElementById('filename-label').textContent = `Analyzing: ${filename}`;
+
+  const startTime = Date.now();
+  let pollInterval;
+
+  // Stage thresholds (progress % → stage key)
+  const stageMap = [
+    [0.00, 'read'],
+    [0.07, 'schema'],
+    [0.12, 'ml'],
+    [0.65, 'llm'],
+    [0.93, 'report'],
+  ];
+
+  function getActiveStage(progress) {
+    let stage = 'read';
+    for (const [threshold, key] of stageMap) {
+      if (progress >= threshold) stage = key;
+    }
+    return stage;
+  }
+
+  function updateStages(activeKey) {
+    const keys = stageMap.map(s => s[1]);
+    const activeIdx = keys.indexOf(activeKey);
+    document.querySelectorAll('#stage-list .stage-item').forEach((el, i) => {
+      const key = el.dataset.stage;
+      const idx = keys.indexOf(key);
+      el.classList.remove('active', 'done');
+      if (idx < activeIdx) el.classList.add('done');
+      else if (idx === activeIdx) el.classList.add('active');
+    });
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch(`/api/job/${jobId}/status`);
+      const data = await res.json();
+
+      const pct = Math.round((data.progress || 0) * 100);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      document.getElementById('progress-fill').style.width = pct + '%';
+      document.getElementById('progress-pct').textContent = pct + '%';
+      document.getElementById('stage-label').textContent = data.stage_label || 'Processing…';
+      document.getElementById('elapsed-label').textContent = elapsed + 's elapsed';
+
+      if (data.eta_seconds) {
+        const eta = Math.round(data.eta_seconds);
+        document.getElementById('eta-label').textContent = `~${eta}s remaining`;
+      } else {
+        document.getElementById('eta-label').textContent = elapsed < 5 ? 'Calculating…' : 'Almost done…';
+      }
+
+      const activeStage = getActiveStage(data.progress || 0);
+      updateStages(activeStage);
+
+      if (data.status === 'done') {
+        clearInterval(pollInterval);
+        document.getElementById('status-icon').textContent = '✅';
+        document.getElementById('stage-label').textContent = 'Analysis complete!';
+        document.getElementById('progress-fill').style.width = '100%';
+        document.getElementById('progress-pct').textContent = '100%';
+        document.getElementById('eta-label').textContent = 'Done';
+        updateStages('report');
+        document.querySelectorAll('#stage-list .stage-item').forEach(el => {
+          el.classList.remove('active'); el.classList.add('done');
+        });
+        setTimeout(() => { window.location.href = '/report?job=' + jobId; }, 800);
+
+      } else if (data.status === 'error') {
+        clearInterval(pollInterval);
+        document.getElementById('status-icon').textContent = '❌';
+        document.getElementById('error-panel').classList.remove('hidden');
+        document.getElementById('error-msg').textContent = data.error || 'Unknown error.';
+      }
+
+    } catch (err) {
+      console.error('Poll error:', err);
+    }
+  }
+
+  poll();
+  pollInterval = setInterval(poll, 1500);
+</script>
+</body>
+</html>

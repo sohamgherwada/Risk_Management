@@ -1,0 +1,33 @@
+# Python virtual environments
+venv/
+venv_old/
+.venv/
+env/
+ENV/
+
+# PyTorch / Large Language Models / Pickle / ONNX files
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.pkl
+
+# Uploads and generated reports
+uploads/
+reports/
+
+# Python caching & byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Notebook checkpoints
+.ipynb_checkpoints/

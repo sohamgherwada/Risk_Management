@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fraud Report — RiskAI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <a href="/" class="nav-brand">
+    <span class="shield">🛡️</span><span>RiskAI</span>
+  </a>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span class="nav-pill" id="nav-filename">Report</span>
+    <button class="btn btn-danger" onclick="downloadPDF()" id="pdf-btn" style="padding:8px 18px;font-size:13px;">
+      📄 Export PDF
+    </button>
+    <a href="/" class="btn btn-ghost" style="padding:8px 18px;font-size:13px;">+ New Analysis</a>
+  </div>
+</nav>
+
+<div class="page" style="padding-bottom:60px;">
+  <div style="max-width:1200px;margin:0 auto;padding:32px 24px 0;">
+
+    <!-- Loading state -->
+    <div id="loading-state" style="text-align:center;padding:80px 0;">
+      <div style="font-size:48px;margin-bottom:16px;">⏳</div>
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Loading report…</div>
+      <div style="font-size:13px;color:var(--text-muted);">Fetching your analysis results.</div>
+    </div>
+
+    <!-- Report content (hidden until loaded) -->
+    <div id="report-content" class="hidden">
+
+      <!-- Page header -->
+      <div class="fade-up" style="margin-bottom:32px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+          <div>
+            <h1 style="font-family:'Outfit', sans-serif;font-size:32px;font-weight:800;margin-bottom:8px;background:linear-gradient(to right, #F8FAFC, #94A3B8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Fraud Risk Report</h1>
+            <div style="font-size:13px;color:var(--text-muted);" id="report-meta">—</div>
+          </div>
+          <div id="fraud-meter" style="text-align:center;padding:16px 28px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);">
+            <div style="font-family:'Outfit', sans-serif;font-size:46px;font-weight:800;line-height:1;" id="fraud-pct-display">—</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;letter-spacing:0.06em;text-transform:uppercase;">Transactions Flagged</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI Grid -->
+      <div class="kpi-grid fade-up delay-1" id="kpi-grid"></div>
+
+      <!-- Schema info -->
+      <div class="card p-6 fade-up delay-1" style="margin-bottom:28px;" id="schema-card">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:10px;">📐 Detected File Schema</div>
+        <div id="schema-roles" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      </div>
+
+      <!-- Flagged Accounts Table -->
+      <div class="fade-up delay-2" style="margin-bottom:32px;">
+        <div class="section-title">🚨 Flagged Accounts</div>
+        <div class="card" style="overflow:hidden;">
+          <div style="overflow-x:auto;">
+            <table class="risk-table" id="accounts-table">
+              <thead>
+                <tr>
+                  <th>Account ID</th>
+                  <th>AI Verdict</th>
+                  <th>Confidence</th>
+                  <th>ML Risk Score</th>
+                  <th>Flagged Txns</th>
+                  <th>Action Required</th>
+                </tr>
+              </thead>
+              <tbody id="accounts-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="no-flags" class="hidden" style="text-align:center;padding:48px;color:var(--text-muted);">
+          <div style="font-size:48px;margin-bottom:12px;">✅</div>
+          <div style="font-weight:600;">No high-risk accounts detected</div>
+          <div style="font-size:13px;margin-top:4px;">All accounts appear within normal parameters.</div>
+        </div>
+      </div>
+
+      <!-- Chat section -->
+      <div class="fade-up delay-3" style="margin-bottom:32px;">
+        <div class="section-title">💬 Ask the AI About This Report</div>
+        <div class="card p-6">
+          <div class="chat-container" id="chat-container">
+            <div class="chat-messages" id="chat-messages">
+              <div class="msg msg-ai">
+                👋 Hi! I've analyzed your transaction data. Ask me anything about the findings — e.g., "Why was account X flagged?" or "What is structuring fraud?"
+              </div>
+            </div>
+            <div class="chat-input-row">
+              <input
+                class="chat-input"
+                id="chat-input"
+                type="text"
+                placeholder="Ask about an account, fraud pattern, or recommended action…"
+                onkeydown="if(event.key==='Enter')sendChat()"
+              />
+              <button class="btn btn-primary" onclick="sendChat()" id="chat-send-btn" style="padding:10px 18px;">
+                Send
+              </button>
+            </div>
+          </div>
+          <!-- Suggested questions -->
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;" id="suggestion-chips"></div>
+        </div>
+      </div>
+
+    </div><!-- /report-content -->
+
+  </div>
+</div>
+
+<!-- Account detail panel -->
+<div class="detail-panel" id="detail-panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+    <div style="font-weight:700;font-size:16px;" id="panel-account-id">Account Details</div>
+    <button class="btn btn-ghost" onclick="closePanel()" style="padding:6px 12px;font-size:12px;">✕ Close</button>
+  </div>
+  <div id="panel-content"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const jobId = params.get('job') || sessionStorage.getItem('job_id');
+  if (!jobId) { window.location.href = '/'; }
+
+  let reportData = null;
+  let chatHistory = [];
+
+  // ── Load report ──────────────────────────────────────────────
+  async function loadReport() {
+    try {
+      const res = await fetch(`/api/job/${jobId}/result`);
+      if (!res.ok) {
+        const err = await res.json();
+        document.getElementById('loading-state').innerHTML =
+          `<div style="text-align:center;padding:80px 0;color:#fca5a5;">
+            <div style="font-size:48px;margin-bottom:16px;">❌</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;">Could not load report</div>
+            <div style="font-size:13px;color:var(--text-muted);">${err.detail || 'Unknown error'}</div>
+            <a href="/" class="btn btn-ghost" style="margin-top:20px;display:inline-flex;">← Upload a file</a>
+          </div>`;
+        return;
+      }
+      reportData = await res.json();
+      renderReport(reportData);
+    } catch (err) {
+      document.getElementById('loading-state').innerHTML = `<p style="color:#fca5a5;">Error: ${err.message}</p>`;
+    }
+  }
+
+  function renderReport(data) {
+    document.getElementById('loading-state').classList.add('hidden');
+    document.getElementById('report-content').classList.remove('hidden');
+
+    const ov = data.overview || {};
+    const accounts = data.flagged_accounts || [];
+
+    // Nav filename
+    document.getElementById('nav-filename').textContent = data.filename || 'Report';
+    document.title = `Report: ${data.filename || 'Fraud Analysis'} — RiskAI`;
+
+    // Meta
+    document.getElementById('report-meta').textContent =
+      `File: ${data.filename} · ${ov.total_transactions?.toLocaleString() || '?'} transactions · ${ov.total_accounts?.toLocaleString() || '?'} accounts`;
+
+    // Fraud % meter
+    const pct = ov.fraud_percentage || 0;
+    const pctEl = document.getElementById('fraud-pct-display');
+    pctEl.textContent = pct.toFixed(1) + '%';
+    pctEl.style.color = pct > 20 ? 'var(--risk-critical)' : pct > 10 ? 'var(--risk-high)' : pct > 5 ? 'var(--risk-medium)' : 'var(--risk-low)';
+
+    // KPI grid
+    const kpiGrid = document.getElementById('kpi-grid');
+    kpiGrid.innerHTML = [
+      { label: 'Total Transactions', value: ov.total_transactions?.toLocaleString(), type: 'info' },
+      { label: 'Unique Accounts',    value: ov.total_accounts?.toLocaleString(),      type: 'info' },
+      { label: 'Flagged Transactions', value: ov.flagged_transactions?.toLocaleString(), type: 'danger' },
+      { label: 'High / Critical Risk', value: ov.high_risk_count,                    type: 'danger' },
+      { label: 'STR Filing Recommended', value: ov.str_recommended,                  type: 'warning' },
+      { label: 'AI-Analyzed Accounts',  value: accounts.length,                       type: 'safe' },
+    ].map(k => `
+      <div class="kpi-card ${k.type}">
+        <div class="kpi-value">${k.value ?? '—'}</div>
+        <div class="kpi-label">${k.label}</div>
+      </div>
+    `).join('');
+
+    // Schema
+    const schema = data.schema_summary || {};
+    const rolesEl = document.getElementById('schema-roles');
+    if (schema.detected_roles?.length) {
+      rolesEl.innerHTML = schema.detected_roles.map(r =>
+        `<span style="background:rgba(6,182,212,0.1);border:1px solid rgba(6,182,212,0.25);color:#67e8f9;font-size:11px;font-weight:600;padding:3px 12px;border-radius:999px;">${r}</span>`
+      ).join('') +
+      (schema.unmapped_columns?.length ?
+        `<span style="font-size:11px;color:var(--text-muted);margin-left:4px;">(+${schema.unmapped_columns.length} other columns)</span>` : '');
+    } else {
+      document.getElementById('schema-card').classList.add('hidden');
+    }
+
+    // Accounts table
+    const tbody = document.getElementById('accounts-tbody');
+    if (accounts.length === 0) {
+      document.getElementById('no-flags').classList.remove('hidden');
+    } else {
+      tbody.innerHTML = accounts.map((a, i) => {
+        const riskPct = Math.round(a.ml_risk_score * 100);
+        const barColor = riskPct >= 80 ? 'var(--risk-critical)' : riskPct >= 65 ? 'var(--risk-high)' : riskPct >= 50 ? 'var(--risk-medium)' : 'var(--risk-low)';
+        return `
+          <tr onclick="openPanel(${i})" title="Click for details">
+            <td><span class="mono" style="font-weight:600;">${a.account_id}</span></td>
+            <td><span class="badge badge-${(a.verdict||'').toLowerCase()}">${a.verdict || '—'}</span></td>
+            <td><span class="mono" style="color:var(--text-secondary);">${a.confidence ?? '—'}%</span></td>
+            <td>
+              <div class="risk-bar-wrap">
+                <div class="risk-bar-bg">
+                  <div class="risk-bar-fill" style="width:${riskPct}%;background:${barColor};"></div>
+                </div>
+                <span class="risk-pct">${riskPct}%</span>
+              </div>
+            </td>
+            <td style="color:var(--text-secondary);">${a.flagged_txn_count} / ${a.total_txn_count}</td>
+            <td><span class="badge badge-${actionBadgeClass(a.action)}">${a.action || '—'}</span></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Suggestion chips
+    if (accounts.length > 0) {
+      const topAcct = accounts[0].account_id;
+      const chips = [
+        `Why was account ${topAcct} flagged?`,
+        'What is structuring fraud?',
+        'Which accounts need STR filing?',
+        'Explain the risk score methodology',
+      ];
+      document.getElementById('suggestion-chips').innerHTML = chips.map(q =>
+        `<button onclick="sendSuggestion('${q}')" style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);color:#93c5fd;font-size:11px;font-weight:500;padding:5px 12px;border-radius:999px;cursor:pointer;transition:all 0.2s;font-family:inherit;"
+          onmouseover="this.style.background='rgba(59,130,246,0.15)'" onmouseout="this.style.background='rgba(59,130,246,0.08)'">${q}</button>`
+      ).join('');
+    }
+  }
+
+  function actionBadgeClass(action) {
+    const map = { FILE_STR: 'critical', ESCALATE: 'high', MONITOR: 'medium', CLEAR: 'low' };
+    return map[action] || 'clear';
+  }
+
+  // ── Account detail panel ─────────────────────────────────────
+  function openPanel(idx) {
+    const a = (reportData?.flagged_accounts || [])[idx];
+    if (!a) return;
+
+    document.getElementById('panel-account-id').textContent = `Account: ${a.account_id}`;
+
+    const riskPct = Math.round(a.ml_risk_score * 100);
+    document.getElementById('panel-content').innerHTML = `
+      <div style="margin-bottom:16px;">
+        <span class="badge badge-${(a.verdict||'').toLowerCase()}" style="font-size:13px;padding:5px 16px;">${a.verdict}</span>
+        <span style="margin-left:10px;font-size:13px;color:var(--text-secondary);">${a.confidence}% confidence</span>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">ML Risk Score</div>
+        <div class="risk-bar-wrap">
+          <div class="risk-bar-bg" style="height:10px;">
+            <div class="risk-bar-fill" style="width:${riskPct}%;background:${riskPct>=80?'var(--risk-critical)':riskPct>=65?'var(--risk-high)':'var(--risk-medium)'};height:10px;"></div>
+          </div>
+          <span class="risk-pct" style="font-size:14px;">${riskPct}%</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div class="card" style="padding:12px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;">${a.flagged_txn_count}</div>
+          <div style="font-size:10px;color:var(--text-muted);">Flagged Txns</div>
+        </div>
+        <div class="card" style="padding:12px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;">${a.total_txn_count}</div>
+          <div style="font-size:10px;color:var(--text-muted);">Total Txns</div>
+        </div>
+      </div>
+
+      ${a.top_reasons?.length ? `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Anomaly Indicators</div>
+          ${a.top_reasons.map(r => `<span class="reason-tag">${r}</span>`).join('')}
+        </div>
+      ` : ''}
+
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">AI Analysis</div>
+        <div style="font-size:13px;color:var(--text-primary);line-height:1.7;padding:12px;background:rgba(59,130,246,0.05);border:1px solid var(--border);border-radius:var(--radius-sm);">${a.analysis || '—'}</div>
+      </div>
+
+      ${a.str_narrative && a.str_narrative !== 'N/A' ? `
+        <div class="str-box">
+          <strong>📋 FINTRAC STR Narrative</strong>
+          ${a.str_narrative}
+        </div>
+      ` : ''}
+
+      <div style="margin-top:20px;">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Recommended Action</div>
+        <span class="badge badge-${actionBadgeClass(a.action)}" style="font-size:13px;padding:6px 18px;">${a.action}</span>
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="btn btn-primary w-full" onclick="askAboutAccount('${a.account_id}')" style="justify-content:center;">
+          💬 Ask AI about this account
+        </button>
+      </div>
+    `;
+
+    document.getElementById('detail-panel').classList.add('open');
+  }
+
+  function closePanel() {
+    document.getElementById('detail-panel').classList.remove('open');
+  }
+
+  // ── Chat ─────────────────────────────────────────────────────
+  async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    input.value = '';
+    appendMsg(msg, 'user');
+    const btn = document.getElementById('chat-send-btn');
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    chatHistory.push({ role: 'user', content: msg });
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, message: msg, history: chatHistory.slice(-6) }),
+      });
+      const data = await res.json();
+      const reply = data.reply || 'Sorry, I could not generate a response.';
+      appendMsg(reply, 'ai');
+      chatHistory.push({ role: 'assistant', content: reply });
+    } catch (err) {
+      appendMsg('Network error: ' + err.message, 'ai');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Send';
+    }
+  }
+
+  function sendSuggestion(q) {
+    document.getElementById('chat-input').value = q;
+    sendChat();
+  }
+
+  function askAboutAccount(accountId) {
+    closePanel();
+    document.getElementById('chat-input').value = `Why was account ${accountId} flagged and what should I do?`;
+    document.getElementById('chat-section')?.scrollIntoView({ behavior: 'smooth' });
+    sendChat();
+  }
+
+  function appendMsg(text, role) {
+    const msgs = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = `msg msg-${role}`;
+    div.textContent = text;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  // ── PDF export ───────────────────────────────────────────────
+  function downloadPDF() {
+    const btn = document.getElementById('pdf-btn');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Generating PDF…';
+    const link = document.createElement('a');
+    link.href = `/api/report/${jobId}/pdf`;
+    link.download = `fraud_report.pdf`;
+    link.click();
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = '📄 Export PDF';
+      showToast('📄 PDF downloaded!');
+    }, 2000);
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // ── Init ─────────────────────────────────────────────────────
+  loadReport();
+</script>
+</body>
+</html>
